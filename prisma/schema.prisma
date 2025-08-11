@@ -1,0 +1,127 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id          String @id @default(cuid())
+  name        String
+  email       String @unique
+  role        UserRole
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  doctorAppointments Appointment[] @relation("DoctorAppointments")
+  patientAppointments Appointment[] @relation("PatientAppointments")
+  medicalRecords     MedicalRecord[]
+  consultations      Consultation[]
+}
+
+model Appointment {
+  id          String @id @default(cuid())
+  date        DateTime
+  status      AppointmentStatus @default(SCHEDULED)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  doctorId    String
+  doctor      User @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  patientId   String
+  patient     User @relation("PatientAppointments", fields: [patientId], references: [id])
+  consultation Consultation?
+}
+
+model MedicalRecord {
+  id          String @id @default(cuid())
+  diagnosis   String
+  treatment   String
+  medications String?
+  allergies   String?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relaciones
+  patientId   String
+  patient     User @relation(fields: [patientId], references: [id])
+  consultations Consultation[]
+}
+
+model Consultation {
+  id            String @id @default(cuid())
+  date          DateTime @default(now())
+  symptoms      String?
+  diagnosis     String?
+  treatment     String?
+  prescription  String?
+  notes         String?
+  documents     String? // JSON array of document URLs
+  status        ConsultationStatus @default(IN_PROGRESS)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relaciones
+  appointmentId String @unique
+  appointment   Appointment @relation(fields: [appointmentId], references: [id])
+  doctorId      String
+  doctor        User @relation(fields: [doctorId], references: [id])
+  medicalRecordId String?
+  medicalRecord MedicalRecord? @relation(fields: [medicalRecordId], references: [id])
+}
+
+// Modelos para administración y métricas
+model Analytics {
+  id                    String @id @default(cuid())
+  date                  DateTime @default(now())
+  totalConsultations    Int @default(0)
+  completedConsultations Int @default(0)
+  cancelledConsultations Int @default(0)
+  averageDuration       Float @default(0) // en minutos
+  totalRevenue          Float @default(0)
+  activeUsers           Int @default(0)
+  createdAt            DateTime @default(now())
+}
+
+model SystemSettings {
+  id                String @id @default(cuid())
+  consultationPrice Float @default(0)
+  currency          String @default("USD")
+  timeZone          String @default("UTC")
+  maxConsultationDuration Int @default(60) // en minutos
+  allowCancellation Boolean @default(true)
+  cancellationDeadline Int @default(24) // horas antes
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+enum UserRole {
+  DOCTOR
+  PATIENT
+  ADMIN
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ConsultationStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}

@@ -1,0 +1,1201 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import { Calendar, User, Video, FileText, Send, ArrowLeft, ArrowRight, Check, Clock, MapPin, Mail, MessageCircle, Upload, Download, Paperclip, X } from 'lucide-react'
+import { User as UserType, Appointment, Consultation, MedicalRecord, Document } from '@/types/api'
+import { formatDate, getStatusColor } from '@/types/helpers'
+import DocumentUpload from '@/components/DocumentUpload'
+import PDFGenerator from '@/components/PDFGenerator'
+
+// Enum para los pasos del flujo
+enum Step {
+  USER_SELECTION = 0,
+  DOCTOR_AGENDA = 1,
+  PATIENT_SELECTION = 2,
+  PATIENT_INFO = 3,
+  VIDEO_CONSULTATION = 4,
+  MEDICAL_NOTES = 5,
+  DOCUMENTS = 6,
+  SEND_DOCUMENTS = 7
+}
+
+export default function SummariPlatform() {
+  const [currentStep, setCurrentStep] = useState<Step>(Step.USER_SELECTION)
+  const [selectedUser, setSelectedUser] = useState<UserType | null>(null)
+  const [selectedDoctor, setSelectedDoctor] = useState<UserType | null>(null)
+  const [selectedPatient, setSelectedPatient] = useState<UserType | null>(null)
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
+  const [consultation, setConsultation] = useState<Consultation | null>(null)
+  const [consultationDocuments, setConsultationDocuments] = useState<Document[]>([])
+  const [sendMethod, setSendMethod] = useState<'email' | 'whatsapp'>('email')
+  const [sendDestination, setSendDestination] = useState('')
+  
+  // Estados para anotaciones médicas
+  const [medicalNotes, setMedicalNotes] = useState({
+    symptoms: '',
+    diagnosis: '',
+    treatment: '',
+    prescription: '',
+    recommendations: '',
+    followUp: '',
+    additionalNotes: ''
+  })
+  
+  // Estados para chat del paciente
+  const [chatMessages, setChatMessages] = useState<Array<{id: string, message: string, timestamp: Date, sender: 'patient' | 'doctor'}>>([])
+  const [currentMessage, setCurrentMessage] = useState('')
+  const [patientFiles, setPatientFiles] = useState<Array<{id: string, name: string, file: File, uploaded: boolean}>>([])
+  
+  // Estados para cargar datos
+  const [users, setUsers] = useState<UserType[]>([])
+  const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [medicalRecords, setMedicalRecords] = useState<MedicalRecord[]>([])
+  const [loading, setLoading] = useState(false)
+
+  // Cargar usuarios al iniciar
+  useEffect(() => {
+    fetchUsers()
+  }, [])
+
+  const fetchUsers = async () => {
+    try {
+      const response = await fetch('/api/users')
+      const data = await response.json()
+      setUsers(data)
+    } catch (error) {
+      console.error('Error fetching users:', error)
+    }
+  }
+
+  const fetchDoctorAppointments = async (doctorId: string) => {
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/appointments?doctorId=${doctorId}`)
+      const data = await response.json()
+      setAppointments(data)
+    } catch (error) {
+      console.error('Error fetching appointments:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchPatientMedicalRecords = async (patientId: string) => {
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/medical-records?patientId=${patientId}`)
+      const data = await response.json()
+      setMedicalRecords(data)
+    } catch (error) {
+      console.error('Error fetching medical records:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const fetchConsultationDocuments = async (consultationId: string) => {
+    try {
+      const response = await fetch(`/api/documents?consultationId=${consultationId}`)
+      const data = await response.json()
+      setConsultationDocuments(data)
+    } catch (error) {
+      console.error('Error fetching documents:', error)
+    }
+  }
+
+  const fetchPatientAppointments = async (patientId: string) => {
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/appointments?patientId=${patientId}`)
+      if (response.ok) {
+        const data = await response.json()
+        setAppointments(data)
+      }
+    } catch (error) {
+      console.error('Error fetching patient appointments:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startConsultation = async (appointmentId: string) => {
+    try {
+      setLoading(true)
+      
+      // Obtener el doctor ID dependiendo del contexto
+      let doctorId = selectedDoctor?.id;
+      
+      // Si no hay doctor seleccionado (usuario paciente), obtenerlo de la cita
+      if (!doctorId && selectedAppointment) {
+        doctorId = selectedAppointment.doctor.id;
+        // Asegurar que el doctor esté configurado para la consulta
+        setSelectedDoctor(selectedAppointment.doctor);
+      }
+      
+      const response = await fetch('/api/consultations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appointmentId,
+          doctorId: doctorId,
+          symptoms: 'Síntomas reportados durante la teleconsulta',
+          notes: 'Consulta iniciada desde la plataforma Summari'
+        })
+      })
+      
+      if (response.ok) {
+        const newConsultation = await response.json()
+        setConsultation(newConsultation)
+        setCurrentStep(Step.VIDEO_CONSULTATION)
+      } else {
+        console.error('Error creating consultation:', await response.text())
+        alert('Error al iniciar la consulta. Por favor, intenta nuevamente.')
+      }
+    } catch (error) {
+      console.error('Error starting consultation:', error)
+      alert('Error al iniciar la consulta. Por favor, intenta nuevamente.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const completeConsultation = async () => {
+    if (!consultation) return
+    
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/consultations/${consultation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'COMPLETED',
+          diagnosis: 'Diagnóstico completado durante teleconsulta',
+          treatment: 'Tratamiento recomendado',
+          prescription: 'Medicamentos recetados'
+        })
+      })
+      
+      if (response.ok) {
+        const updatedConsultation = await response.json()
+        setConsultation(updatedConsultation)
+        // Cargar datos existentes en el formulario si existen
+        setMedicalNotes({
+          symptoms: updatedConsultation.symptoms || '',
+          diagnosis: updatedConsultation.diagnosis || '',
+          treatment: updatedConsultation.treatment || '',
+          prescription: updatedConsultation.prescription || '',
+          recommendations: '',
+          followUp: '',
+          additionalNotes: updatedConsultation.notes || ''
+        })
+        setCurrentStep(Step.MEDICAL_NOTES)
+      }
+    } catch (error) {
+      console.error('Error completing consultation:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const saveMedicalNotes = async () => {
+    if (!consultation) return
+    
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/consultations/${consultation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symptoms: medicalNotes.symptoms,
+          diagnosis: medicalNotes.diagnosis,
+          treatment: medicalNotes.treatment,
+          prescription: medicalNotes.prescription,
+          notes: `${medicalNotes.additionalNotes}\n\nRecomendaciones: ${medicalNotes.recommendations}\nSeguimiento: ${medicalNotes.followUp}`.trim()
+        })
+      })
+      
+      if (response.ok) {
+        const updatedConsultation = await response.json()
+        setConsultation(updatedConsultation)
+        fetchConsultationDocuments(updatedConsultation.id)
+        setCurrentStep(Step.DOCUMENTS)
+      }
+    } catch (error) {
+      console.error('Error saving medical notes:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sendDocuments = async () => {
+    if (!consultation || !sendDestination) return
+    
+    try {
+      setLoading(true)
+      const response = await fetch(`/api/send/${sendMethod}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consultationId: consultation.id,
+          destination: sendDestination,
+          patientName: selectedPatient?.name,
+          doctorName: selectedDoctor?.name,
+          documentTypes: ['report', 'prescription', 'instructions'] // Enviar los 3 PDFs
+        })
+      })
+      
+      if (response.ok) {
+        alert(`Documentos médicos enviados exitosamente por ${sendMethod === 'email' ? 'Email' : 'WhatsApp'} a ${sendDestination}`)
+        // No cambiar de paso, mantener en el mismo para permitir más envíos
+      } else {
+        alert('Error al enviar los documentos. Por favor, intenta nuevamente.')
+      }
+    } catch (error) {
+      console.error('Error sending documents:', error)
+      alert('Error al enviar los documentos. Por favor, intenta nuevamente.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Funciones para chat del paciente
+  const sendChatMessage = () => {
+    if (!currentMessage.trim()) return
+    
+    const newMessage = {
+      id: Date.now().toString(),
+      message: currentMessage,
+      timestamp: new Date(),
+      sender: 'patient' as const
+    }
+    
+    setChatMessages(prev => [...prev, newMessage])
+    setCurrentMessage('')
+  }
+
+  // Función para manejar archivos del paciente
+  const handlePatientFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files) return
+
+    Array.from(files).forEach(file => {
+      const newFile = {
+        id: Date.now().toString() + Math.random(),
+        name: file.name,
+        file: file,
+        uploaded: false
+      }
+      setPatientFiles(prev => [...prev, newFile])
+    })
+  }
+
+  const uploadPatientFile = async (fileId: string) => {
+    const fileToUpload = patientFiles.find(f => f.id === fileId)
+    if (!fileToUpload || !consultation) return
+
+    try {
+      const formData = new FormData()
+      formData.append('file', fileToUpload.file)
+      formData.append('consultationId', consultation.id)
+      formData.append('documentType', 'PATIENT_UPLOAD')
+
+      const response = await fetch('/api/documents', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (response.ok) {
+        setPatientFiles(prev => 
+          prev.map(f => f.id === fileId ? { ...f, uploaded: true } : f)
+        )
+        alert('Archivo subido exitosamente')
+      }
+    } catch (error) {
+      console.error('Error uploading file:', error)
+      alert('Error al subir el archivo')
+    }
+  }
+
+  const doctors = users.filter(user => user.role === 'DOCTOR')
+  const patients = users.filter(user => user.role === 'PATIENT')
+
+  const stepTitles = [
+    "Selección de Usuario",
+    "Agenda del Doctor", 
+    "Selección de Paciente",
+    "Información del Paciente",
+    "Video Consulta",
+    "Anotaciones Médicas",
+    "Documentos",
+    "Envío de Documentos"
+  ]
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Header */}
+      <header className="bg-white shadow-sm border-b">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-16">
+            <div className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <Video className="w-5 h-5 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900">Summari</h1>
+            </div>
+            
+            {/* Progress Steps */}
+            <div className="hidden md:flex items-center space-x-4">
+              {stepTitles.map((title, index) => (
+                <div key={index} className="flex items-center">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                    currentStep === index 
+                      ? 'bg-blue-600 text-white' 
+                      : currentStep > index 
+                        ? 'bg-green-500 text-white'
+                        : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {currentStep > index ? <Check className="w-4 h-4" /> : index + 1}
+                  </div>
+                  {index < stepTitles.length - 1 && (
+                    <div className={`w-12 h-0.5 mx-2 ${currentStep > index ? 'bg-green-500' : 'bg-gray-200'}`} />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+          <div className="px-6 py-4 bg-gradient-to-r from-blue-600 to-indigo-600">
+            <h2 className="text-xl font-semibold text-white">{stepTitles[currentStep]}</h2>
+          </div>
+
+          <div className="p-6">
+            {/* Step 0: User Selection */}
+            {currentStep === Step.USER_SELECTION && (
+              <div className="space-y-6">
+                <div className="text-center">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">¡Bienvenido a Summari!</h3>
+                  <p className="text-gray-600">Selecciona tu rol para comenzar</p>
+                </div>
+                
+                <div className="grid md:grid-cols-2 gap-6 max-w-2xl mx-auto">
+                  <button
+                    onClick={() => {
+                      setSelectedUser({ role: 'DOCTOR' } as UserType)
+                      setCurrentStep(Step.DOCTOR_AGENDA)
+                    }}
+                    className="p-6 border-2 border-dashed border-gray-300 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition-colors group"
+                  >
+                    <User className="w-12 h-12 text-blue-600 mx-auto mb-4" />
+                    <h4 className="text-lg font-semibold text-gray-900 group-hover:text-blue-600">Doctor</h4>
+                    <p className="text-gray-600 mt-2">Gestionar consultas y pacientes</p>
+                  </button>
+                  
+                  <button
+                    onClick={() => {
+                      setSelectedUser({ role: 'PATIENT' } as UserType)
+                      setCurrentStep(Step.PATIENT_SELECTION)
+                    }}
+                    className="p-6 border-2 border-dashed border-gray-300 rounded-xl hover:border-green-500 hover:bg-green-50 transition-colors group"
+                  >
+                    <User className="w-12 h-12 text-green-600 mx-auto mb-4" />
+                    <h4 className="text-lg font-semibold text-gray-900 group-hover:text-green-600">Paciente</h4>
+                    <p className="text-gray-600 mt-2">Acceder a consultas médicas</p>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 1: Doctor Agenda */}
+            {currentStep === Step.DOCTOR_AGENDA && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Seleccionar Doctor</h3>
+                  <button
+                    onClick={() => setCurrentStep(Step.USER_SELECTION)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {doctors.map((doctor) => (
+                    <button
+                      key={doctor.id}
+                      onClick={() => {
+                        setSelectedDoctor(doctor)
+                        fetchDoctorAppointments(doctor.id)
+                      }}
+                      className={`p-4 rounded-lg border transition-colors ${
+                        selectedDoctor?.id === doctor.id
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <User className="w-8 h-8 text-blue-600 mx-auto mb-2" />
+                      <h4 className="font-semibold text-gray-900">{doctor.name}</h4>
+                      <p className="text-sm text-gray-600">{doctor.email}</p>
+                    </button>
+                  ))}
+                </div>
+
+                {selectedDoctor && (
+                  <div className="mt-8">
+                    <h4 className="text-lg font-semibold text-gray-900 mb-4">
+                      Citas de {selectedDoctor.name}
+                    </h4>
+                    
+                    {loading ? (
+                      <div className="text-center py-8">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                        <p className="text-gray-600 mt-2">Cargando citas...</p>
+                      </div>
+                    ) : appointments.length > 0 ? (
+                      <div className="space-y-3">
+                        {appointments.map((appointment) => (
+                          <div
+                            key={appointment.id}
+                            className={`p-4 rounded-lg border cursor-pointer transition-colors ${
+                              selectedAppointment?.id === appointment.id
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-gray-200 hover:border-gray-300'
+                            }`}
+                            onClick={() => setSelectedAppointment(appointment)}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="font-semibold text-gray-900">{appointment.patient.name}</p>
+                                <p className="text-sm text-gray-600">{appointment.patient.email}</p>
+                                <p className="text-sm text-gray-500">{formatDate(appointment.date)}</p>
+                                {appointment.notes && (
+                                  <p className="text-sm text-gray-600 mt-1">{appointment.notes}</p>
+                                )}
+                              </div>
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
+                                {appointment.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-600 text-center py-8">No hay citas programadas</p>
+                    )}
+
+                    {selectedAppointment && (
+                      <div className="mt-6 flex justify-center">
+                        <button
+                          onClick={() => {
+                            setSelectedPatient(selectedAppointment.patient)
+                            fetchPatientMedicalRecords(selectedAppointment.patient.id)
+                            setCurrentStep(Step.PATIENT_INFO)
+                          }}
+                          className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center"
+                        >
+                          Ver Información del Paciente
+                          <ArrowRight className="w-4 h-4 ml-2" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 2: Patient Selection */}
+            {currentStep === Step.PATIENT_SELECTION && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Seleccionar Paciente</h3>
+                  <button
+                    onClick={() => setCurrentStep(Step.USER_SELECTION)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="text-center mb-6">
+                  <p className="text-gray-600">Selecciona tu perfil de paciente para continuar</p>
+                </div>
+
+                {patients.length > 0 ? (
+                  <div className="grid gap-4">
+                    {patients.map((patient) => (
+                      <div
+                        key={patient.id}
+                        className="border border-gray-200 rounded-lg p-4 hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer"
+                        onClick={() => {
+                          setSelectedPatient(patient)
+                          fetchPatientMedicalRecords(patient.id)
+                          fetchPatientAppointments(patient.id)
+                          setCurrentStep(Step.PATIENT_INFO)
+                        }}
+                      >
+                        <div className="flex items-center space-x-4">
+                          <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                            <User className="w-6 h-6 text-green-600" />
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-gray-900">{patient.name}</h4>
+                            <p className="text-sm text-gray-600">{patient.email}</p>
+                          </div>
+                          <ArrowRight className="w-5 h-5 text-gray-400" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <User className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <h4 className="text-lg font-medium text-gray-900 mb-2">No hay pacientes disponibles</h4>
+                    <p className="text-gray-600">No se encontraron pacientes registrados en el sistema.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 3: Patient Info */}
+            {currentStep === Step.PATIENT_INFO && selectedPatient && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Información del Paciente</h3>
+                  <button
+                    onClick={() => setCurrentStep(selectedUser?.role === 'DOCTOR' ? Step.DOCTOR_AGENDA : Step.PATIENT_SELECTION)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-6">
+                  <div className="flex items-center space-x-4 mb-4">
+                    <User className="w-12 h-12 text-gray-600" />
+                    <div>
+                      <h4 className="text-lg font-semibold text-gray-900">{selectedPatient.name}</h4>
+                      <p className="text-gray-600">{selectedPatient.email}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-4">Historial Médico</h4>
+                  
+                  {loading ? (
+                    <div className="text-center py-8">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                      <p className="text-gray-600 mt-2">Cargando historial médico...</p>
+                    </div>
+                  ) : medicalRecords.length > 0 ? (
+                    <div className="space-y-4">
+                      {medicalRecords.map((record) => (
+                        <div key={record.id} className="bg-white border rounded-lg p-4">
+                          <div className="grid md:grid-cols-2 gap-4">
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">Diagnóstico:</p>
+                              <p className="text-gray-700">{record.diagnosis}</p>
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">Tratamiento:</p>
+                              <p className="text-gray-700">{record.treatment}</p>
+                            </div>
+                            {record.medications && (
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">Medicamentos:</p>
+                                <p className="text-gray-700">{record.medications}</p>
+                              </div>
+                            )}
+                            {record.allergies && (
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">Alergias:</p>
+                                <p className="text-gray-700">{record.allergies}</p>
+                              </div>
+                            )}
+                          </div>
+                          {record.notes && (
+                            <div className="mt-3 pt-3 border-t">
+                              <p className="text-sm font-medium text-gray-900">Notas:</p>
+                              <p className="text-gray-700">{record.notes}</p>
+                            </div>
+                          )}
+                          <div className="mt-3 pt-3 border-t">
+                            <p className="text-xs text-gray-500">
+                              Fecha: {formatDate(record.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-600 text-center py-8">No hay registros médicos disponibles</p>
+                  )}
+                </div>
+
+                {/* Citas del Paciente */}
+                <div>
+                  <h4 className="text-lg font-semibold text-gray-900 mb-4">Mis Citas Programadas</h4>
+                  
+                  {selectedUser?.role === 'PATIENT' && (
+                    <div className="space-y-4">
+                      {appointments.filter(apt => apt.patient.id === selectedPatient.id).length > 0 ? (
+                        appointments.filter(apt => apt.patient.id === selectedPatient.id).map((appointment) => (
+                          <div 
+                            key={appointment.id} 
+                            className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                              selectedAppointment?.id === appointment.id 
+                                ? 'border-blue-500 bg-blue-50' 
+                                : 'border-gray-200 hover:border-blue-300'
+                            }`}
+                            onClick={() => {
+                              setSelectedAppointment(appointment)
+                              setSelectedDoctor(appointment.doctor)
+                            }}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h5 className="font-semibold text-gray-900">
+                                  Dr. {appointment.doctor.name}
+                                </h5>
+                                <p className="text-sm text-gray-600">{appointment.doctor.email}</p>
+                                <div className="flex items-center mt-2 text-sm text-gray-500">
+                                  <Calendar className="w-4 h-4 mr-1" />
+                                  <span>{formatDate(appointment.date)}</span>
+                                  <Clock className="w-4 h-4 mr-1 ml-4" />
+                                  <span>{new Date(appointment.date).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                              </div>
+                              <span className={`px-2 py-1 rounded-full text-xs ${getStatusColor(appointment.status)}`}>
+                                {appointment.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-gray-600 text-center py-8">No tienes citas programadas</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-center pt-6">
+                  <button
+                    onClick={() => selectedAppointment && startConsultation(selectedAppointment.id)}
+                    disabled={loading || !selectedAppointment}
+                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 flex items-center disabled:opacity-50"
+                  >
+                    <Video className="w-4 h-4 mr-2" />
+                    {loading ? 'Iniciando...' : 'Iniciar Video Consulta'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Video Consultation */}
+            {currentStep === Step.VIDEO_CONSULTATION && consultation && (
+              <div className="space-y-6">
+                <div className="text-center">
+                  <h3 className="text-2xl font-bold text-gray-900 mb-2">Video Consulta en Progreso</h3>
+                  <p className="text-gray-600">Sesión iniciada: {formatDate(consultation.createdAt)}</p>
+                </div>
+
+                {/* Interface para DOCTOR */}
+                {selectedUser?.role === 'DOCTOR' && (
+                <div className="grid lg:grid-cols-3 gap-6">
+                  {/* Panel de Video (2/3 del ancho) */}
+                  <div className="lg:col-span-2 space-y-4">
+                    <div className="bg-gray-900 rounded-lg aspect-video flex items-center justify-center">
+                      <div className="text-center text-white">
+                        <Video className="w-16 h-16 mx-auto mb-4" />
+                        <p className="text-lg">Video Consulta en Vivo</p>
+                        <p className="text-sm opacity-75">Doctor: {selectedDoctor?.name}</p>
+                        <p className="text-sm opacity-75">Paciente: {selectedPatient?.name}</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-50 rounded-lg p-4">
+                      <h4 className="font-semibold text-gray-900 mb-2">Información de la Consulta:</h4>
+                      <div className="grid md:grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium">ID Consulta:</span> {consultation.id}
+                        </div>
+                        <div>
+                          <span className="font-medium">Estado:</span> 
+                          <span className={`ml-2 px-2 py-1 rounded-full text-xs ${getStatusColor(consultation.status)}`}>
+                            {consultation.status}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium">Duración:</span> En curso
+                        </div>
+                        <div>
+                          <span className="font-medium">Fecha:</span> {formatDate(consultation.date)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Panel de Anotaciones en Tiempo Real (1/3 del ancho) */}
+                  <div className="lg:col-span-1">
+                    <div className="bg-white border rounded-lg p-4 h-full">
+                      <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+                        <FileText className="w-5 h-5 mr-2 text-blue-600" />
+                        Anotaciones en Tiempo Real
+                      </h4>
+                      
+                      <form className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Síntomas Observados
+                          </label>
+                          <textarea
+                            value={medicalNotes.symptoms}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, symptoms: e.target.value }))}
+                            placeholder="Anote síntomas conforme los observe..."
+                            className="w-full h-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Observaciones Clínicas
+                          </label>
+                          <textarea
+                            value={medicalNotes.additionalNotes}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, additionalNotes: e.target.value }))}
+                            placeholder="Observaciones durante la consulta..."
+                            className="w-full h-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Diagnóstico Preliminar
+                          </label>
+                          <textarea
+                            value={medicalNotes.diagnosis}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, diagnosis: e.target.value }))}
+                            placeholder="Diagnóstico basado en la evaluación..."
+                            className="w-full h-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Plan de Tratamiento
+                          </label>
+                          <textarea
+                            value={medicalNotes.treatment}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, treatment: e.target.value }))}
+                            placeholder="Tratamiento a seguir..."
+                            className="w-full h-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Medicamentos
+                          </label>
+                          <textarea
+                            value={medicalNotes.prescription}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, prescription: e.target.value }))}
+                            placeholder="Medicamentos y dosis..."
+                            className="w-full h-16 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Recomendaciones
+                          </label>
+                          <textarea
+                            value={medicalNotes.recommendations}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, recommendations: e.target.value }))}
+                            placeholder="Recomendaciones generales..."
+                            className="w-full h-12 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Próximo Seguimiento
+                          </label>
+                          <textarea
+                            value={medicalNotes.followUp}
+                            onChange={(e) => setMedicalNotes(prev => ({ ...prev, followUp: e.target.value }))}
+                            placeholder="Próxima cita, estudios..."
+                            className="w-full h-12 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+
+                        <div className="pt-2 border-t">
+                          <button
+                            type="button"
+                            onClick={saveMedicalNotes}
+                            disabled={loading}
+                            className="w-full bg-green-600 text-white px-3 py-2 rounded text-sm hover:bg-green-700 disabled:opacity-50"
+                          >
+                            {loading ? 'Guardando...' : 'Guardar Anotaciones'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-center space-x-4">
+                  <button
+                    onClick={() => setCurrentStep(Step.PATIENT_INFO)}
+                    className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    onClick={completeConsultation}
+                    disabled={loading}
+                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center disabled:opacity-50"
+                  >
+                    {loading ? 'Finalizando...' : 'Finalizar Consulta y Generar Documentos'}
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 5: Medical Notes */}
+            {currentStep === Step.MEDICAL_NOTES && consultation && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Anotaciones Médicas</h3>
+                  <button
+                    onClick={() => setCurrentStep(Step.VIDEO_CONSULTATION)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="font-semibold text-gray-900 mb-2">Información de la Consulta</h4>
+                  <div className="grid md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Doctor:</span> {selectedDoctor?.name}
+                    </div>
+                    <div>
+                      <span className="font-medium">Paciente:</span> {selectedPatient?.name}
+                    </div>
+                    <div>
+                      <span className="font-medium">Fecha:</span> {formatDate(consultation.date)}
+                    </div>
+                    <div>
+                      <span className="font-medium">Estado:</span> 
+                      <span className={`ml-2 px-2 py-1 rounded-full text-xs ${getStatusColor(consultation.status)}`}>
+                        {consultation.status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <form className="space-y-6">
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Síntomas Observados
+                      </label>
+                      <textarea
+                        value={medicalNotes.symptoms}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, symptoms: e.target.value }))}
+                        placeholder="Descripción detallada de los síntomas reportados y observados..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Diagnóstico
+                      </label>
+                      <textarea
+                        value={medicalNotes.diagnosis}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, diagnosis: e.target.value }))}
+                        placeholder="Diagnóstico clínico basado en los síntomas y evaluación..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Tratamiento
+                      </label>
+                      <textarea
+                        value={medicalNotes.treatment}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, treatment: e.target.value }))}
+                        placeholder="Plan de tratamiento recomendado..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Receta / Medicamentos
+                      </label>
+                      <textarea
+                        value={medicalNotes.prescription}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, prescription: e.target.value }))}
+                        placeholder="Medicamentos prescritos, dosis, frecuencia..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Recomendaciones
+                      </label>
+                      <textarea
+                        value={medicalNotes.recommendations}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, recommendations: e.target.value }))}
+                        placeholder="Recomendaciones generales, cuidados, estilo de vida..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Seguimiento
+                      </label>
+                      <textarea
+                        value={medicalNotes.followUp}
+                        onChange={(e) => setMedicalNotes(prev => ({ ...prev, followUp: e.target.value }))}
+                        placeholder="Próxima cita, controles, estudios adicionales..."
+                        className="w-full h-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Notas Adicionales
+                    </label>
+                    <textarea
+                      value={medicalNotes.additionalNotes}
+                      onChange={(e) => setMedicalNotes(prev => ({ ...prev, additionalNotes: e.target.value }))}
+                      placeholder="Observaciones adicionales, comentarios especiales..."
+                      className="w-full h-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  <div className="flex justify-center space-x-4">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(Step.VIDEO_CONSULTATION)}
+                      className="bg-gray-500 text-white px-6 py-2 rounded-lg hover:bg-gray-600"
+                    >
+                      Volver
+                    </button>
+                    <button
+                      type="button"
+                      onClick={saveMedicalNotes}
+                      disabled={loading}
+                      className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 flex items-center disabled:opacity-50"
+                    >
+                      {loading ? 'Guardando...' : 'Guardar y Continuar'}
+                      <ArrowRight className="w-4 h-4 ml-2" />
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Step 6: Documents */}
+            {currentStep === Step.DOCUMENTS && consultation && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Documentos de la Consulta</h3>
+                  <button
+                    onClick={() => setCurrentStep(Step.MEDICAL_NOTES)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="font-semibold text-gray-900 mb-2">Consulta Completada</h4>
+                  <div className="grid md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium">Doctor:</span> {selectedDoctor?.name}
+                    </div>
+                    <div>
+                      <span className="font-medium">Paciente:</span> {selectedPatient?.name}
+                    </div>
+                    {consultation.diagnosis && (
+                      <div className="md:col-span-2">
+                        <span className="font-medium">Diagnóstico:</span> {consultation.diagnosis}
+                      </div>
+                    )}
+                    {consultation.treatment && (
+                      <div className="md:col-span-2">
+                        <span className="font-medium">Tratamiento:</span> {consultation.treatment}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* PDF Generator Component - Documentos Generados */}
+                {selectedPatient && (
+                  <PDFGenerator 
+                    consultationId={consultation.id}
+                    patientName={selectedPatient.name}
+                  />
+                )}
+
+                <div className="flex justify-center pt-6">
+                  <button
+                    onClick={() => setCurrentStep(Step.SEND_DOCUMENTS)}
+                    className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 flex items-center"
+                  >
+                    Continuar al Envío
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 7: Send Documents */}
+            {currentStep === Step.SEND_DOCUMENTS && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xl font-semibold text-gray-900">Enviar Documentos al Paciente</h3>
+                  <button
+                    onClick={() => setCurrentStep(Step.DOCUMENTS)}
+                    className="flex items-center text-gray-600 hover:text-gray-900"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-1" />
+                    Volver
+                  </button>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-blue-900 mb-2">📋 Documentos Médicos Generados</h4>
+                  <p className="text-blue-800 text-sm">
+                    Los siguientes documentos han sido generados automáticamente y están listos para enviar al paciente:
+                  </p>
+                  <div className="mt-3 space-y-1 text-sm">
+                    <div className="flex items-center gap-2 text-blue-700">
+                      <FileText className="w-4 h-4" />
+                      <span>📄 Informe Médico Completo</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-blue-700">
+                      <FileText className="w-4 h-4" />
+                      <span>💊 Receta Médica</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-blue-700">
+                      <FileText className="w-4 h-4" />
+                      <span>📋 Indicaciones y Recomendaciones</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Método de Envío
+                    </label>
+                    <div className="grid grid-cols-2 gap-4">
+                      <button
+                        onClick={() => setSendMethod('email')}
+                        className={`p-4 rounded-lg border transition-colors ${
+                          sendMethod === 'email'
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <Mail className="w-6 h-6 text-blue-600 mx-auto mb-2" />
+                        <p className="font-medium">Email</p>
+                        <p className="text-xs text-gray-500">Envío inmediato</p>
+                      </button>
+                      <button
+                        onClick={() => setSendMethod('whatsapp')}
+                        className={`p-4 rounded-lg border transition-colors ${
+                          sendMethod === 'whatsapp'
+                            ? 'border-green-500 bg-green-50'
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                      >
+                        <MessageCircle className="w-6 h-6 text-green-600 mx-auto mb-2" />
+                        <p className="font-medium">WhatsApp</p>
+                        <p className="text-xs text-gray-500">Con enlace de descarga</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {sendMethod === 'email' ? 'Correo Electrónico del Paciente' : 'Número de WhatsApp del Paciente'}
+                    </label>
+                    <input
+                      type={sendMethod === 'email' ? 'email' : 'tel'}
+                      value={sendDestination}
+                      onChange={(e) => setSendDestination(e.target.value)}
+                      placeholder={sendMethod === 'email' ? 'paciente@email.com' : '+1234567890'}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
+
+                  {selectedPatient && (
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Destinatario:</span> {selectedPatient.name}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        <span className="font-medium">Doctor:</span> Dr. {selectedDoctor?.name}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex justify-center space-x-4">
+                  <button
+                    onClick={sendDocuments}
+                    disabled={!sendDestination || loading}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 flex items-center disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                  >
+                    <Send className="w-5 h-5 mr-2" />
+                    {loading ? 'Enviando Documentos...' : `Enviar Documentos por ${sendMethod === 'email' ? 'Email' : 'WhatsApp'}`}
+                  </button>
+                </div>
+
+                <div className="text-center pt-6">
+                  <button
+                    onClick={() => {
+                      // Reset all states
+                      setCurrentStep(Step.USER_SELECTION)
+                      setSelectedUser(null)
+                      setSelectedDoctor(null)
+                      setSelectedPatient(null)
+                      setSelectedAppointment(null)
+                      setConsultation(null)
+                      setConsultationDocuments([])
+                      setSendDestination('')
+                    }}
+                    className="text-gray-600 hover:text-gray-900 text-sm"
+                  >
+                    Iniciar Nueva Consulta
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </main>
+    </div>
+  )
+}
